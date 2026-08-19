@@ -1,12 +1,22 @@
-// app.js
+/**
+ * Express Application Setup
+ * Main application configuration and middleware setup
+ */
+
 const express = require('express');
 const dotenv = require('dotenv');
 const path = require('path');
-const bodyParser = require('body-parser');
 const cors = require('cors');
+
+// Import utilities and middleware
+const { errorHandler, asyncHandler } = require('./middleware/errorHandler');
+const { initializeSecurityMiddleware, requestLogger } = require('./middleware/securityMiddleware');
+const { sendSuccess, sendNotFound } = require('./utils/responseHandler');
+const Logger = require('./utils/logger');
+const { ENV, CORS_OPTIONS } = require('./utils/constants');
 const connectDB = require('./config/db');
 
-// Routes
+// Import routes
 const authRoutes = require('./routes/authRoutes');
 const hrRoutes = require('./routes/hrRoutes');
 const userRoutes = require('./routes/userRoutes');
@@ -30,28 +40,101 @@ const app = express();
 // Connect to MongoDB
 connectDB();
 
-// Middleware
-app.use(cors({ origin: 'http://localhost:3000', credentials: true }));
-app.use(express.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+// ============================================
+// Global Middleware Setup
+// ============================================
 
-// Static files
+// Initialize security middleware (helmet, rate limiting, sanitization)
+initializeSecurityMiddleware(app);
+
+// CORS Configuration
+app.use(cors(CORS_OPTIONS));
+
+// Body parser middleware
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
+
+// Request logging middleware
+app.use(requestLogger);
+
+// Static files serving
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// API routes
-app.use('/api/auth', authRoutes);
-app.use('/api/user', hrRoutes);
-app.use('/api/update', userRoutes);
-app.use('/api/profile', profileRoutes);
-app.use('/api/departments', departmentRoutes);
-app.use('/api/teams', teamRoutes);
-app.use('/api/goals', goalRoutes);
-app.use('/api/self-assessments', selfAssessmentRoutes);
-app.use('/api/feedback', feedbackRoutes);
-app.use('/api/tasks', taskRoutes);
-app.use('/api/goalReviews', goalReviewRoutes);
-app.use('/api/taskReviews', taskReviewRoutes);
-app.use('/api/notifications', notificationRoutes);
+// ============================================
+// Health Check Route
+// ============================================
+app.get('/api/health', (req, res) => {
+  return sendSuccess(res, 200, 'Server is running');
+});
+
+// ============================================
+// API Routes
+// ============================================
+const apiRoutes = {
+  '/api/auth': authRoutes,
+  '/api/user': hrRoutes,
+  '/api/update': userRoutes,
+  '/api/profile': profileRoutes,
+  '/api/departments': departmentRoutes,
+  '/api/teams': teamRoutes,
+  '/api/goals': goalRoutes,
+  '/api/self-assessments': selfAssessmentRoutes,
+  '/api/feedback': feedbackRoutes,
+  '/api/tasks': taskRoutes,
+  '/api/goal-reviews': goalReviewRoutes,
+  '/api/task-reviews': taskReviewRoutes,
+  '/api/notifications': notificationRoutes,
+};
+
+// Register all routes
+Object.entries(apiRoutes).forEach(([path, route]) => {
+  app.use(path, route);
+  Logger.debug(`Route registered: ${path}`);
+});
+
+// ============================================
+// 404 Error Handling
+// ============================================
+app.use((req, res) => {
+  return sendNotFound(res, `Endpoint not found: ${req.method} ${req.originalUrl}`);
+});
+
+// ============================================
+// Global Error Handler Middleware
+// ============================================
+app.use(errorHandler);
+
+// ============================================
+// Graceful Shutdown
+// ============================================
+process.on('SIGTERM', () => {
+  Logger.info('SIGTERM received, shutting down gracefully');
+  server.close(() => {
+    Logger.info('Server closed');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  Logger.info('SIGINT received, shutting down gracefully');
+  process.exit(0);
+});
+
+// Log uncaught exceptions
+process.on('uncaughtException', (error) => {
+  Logger.error('Uncaught Exception', {
+    message: error.message,
+    stack: error.stack,
+  });
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  Logger.error('Unhandled Rejection', {
+    reason: reason.message || reason,
+    promise: promise.toString(),
+  });
+});
 
 // Export app
 module.exports = app;
